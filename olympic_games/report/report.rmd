@@ -1,0 +1,40 @@
+---
+title: "Athlete Success Survey"
+author: "Mr.Slizen"
+date: "10/24/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+This report need *tidyverse* package in order to compile properly
+```{r echo=FALSE}
+suppressMessages(library(tidyverse))
+
+import_data <- function(ext) {
+  list.files(path = '../data/', pattern = paste0('*.',ext), full.names = T) %>%
+               map_df(~read_csv(., show_col_types = F))
+}
+
+
+import_problems <- function(ext) {
+  list.files(path = '../data/', pattern = paste0('*.',ext), full.names = T) %>%
+    map_df(~problems(read_csv(., show_col_types = F)))
+}
+```
+## importing data
+We have multiple csv with results and features of athletes in different olympic games.
+Let's try to import it and merge into single dataframe
+```{r}
+sport_data <- import_data('csv')
+str(sport_data)
+```
+
+We have a dataframe but we found some problems. What are those?
+
+```{r}
+import_problems('csv')
+```
+
+Looks like we have a number of lines with wrong number of columns
