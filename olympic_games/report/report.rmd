@@ -10,8 +10,12 @@ knitr::opts_chunk$set(echo = TRUE)
 ```
 This report need *tidyverse* package in order to compile properly
 ```{r echo=FALSE}
-suppressMessages(library(tidyverse))
-
+suppressMessages(if (!require(tidyverse)){
+install.packages("tidyverse")})
+```
+##Data inport
+Let's define some functions for data import
+```{r}
 import_data <- function(ext) {
   list.files(path = '../data/', pattern = paste0('*.',ext), full.names = T) %>%
                map_df(~read_csv(., show_col_types = F))
@@ -37,4 +41,226 @@ We have a dataframe but we found some problems. What are those?
 import_problems('csv')
 ```
 
-Looks like we have a number of lines with wrong number of columns
+Looks like we have a number of lines with wrong number of columns. Visual inspection shows, that last lines in some of original csv are partial and in that way useless.
+Let's redifine functions for import.
+```{r}
+read_prop_csv <- function(path){if (nrow(problems(read_csv(path,show_col_types = F)))) {
+  read_csv(path, show_col_types = F) %>% head(.,-1)
+} else {
+  read_csv(path, show_col_types = F)
+}}
+
+import_data <- function(ext) {
+  list.files(path = '../data/', pattern = paste0('*.',ext), full.names = T) %>%
+    map_df(~read_prop_csv(.)) 
+}
+```
+...and import data once more:
+```{r}
+sport_data <- import_data('csv')
+```
+Let's brush it even more. A couple of rows has "G" in a Sex column. Visual inspection shows, that both of them are men. WARNING: If dataset us changed, please readjust filters on this step. Also, let's drop complete duplicates and take - Sex, NOC, Season, Sport, Medal - as factor variables. 
+```{r}
+sport_data <- mutate(sport_data, Sex = replace(Sex, Sex == "G", "M")) %>%
+  distinct(.) %>%
+  mutate(across(c(Sex, NOC, Season, Sport), as.factor )) %>% 
+  mutate(Medal=factor(Medal,levels = c('Gold',"Silver",'Bronze')))
+```
+
+## Tasks
+
+**3)** So, what are minimal ages for Male and Females un 1992 Olympics?
+```{r}
+filter(sport_data, Year == 1992) %>%
+  group_by(Sex) %>%
+  summarize(min_age = min(Age, na.rm = T))
+```
+Wow! **12 for females and 11 for males**. So young..
+**4)** What are mean and std for Height in both genders?
+As long as many athletes have participated in multiple Olympics and Events let's keep only one value for each ID.
+```{r}
+distinct(sport_data,ID,.keep_all = T) %>% 
+  group_by(Sex) %>%
+  summarize(mean_height=mean(Height, na.rm = T), sd=sd(Height, na.rm = T))
+```
+**for Females mean = 168.9320, sd = 8.5117108423 and for Males mean = 179.4397, sd = 9.462296**
+
+Nothing surprising here men are higher than women. But athletes are a bit higher than common average persons of respective gender.
+
+**5)** But, what are the same statistics for Female tennisists in 2000?
+The same way, we will drop duplicates by ID
+```{r}
+filter(sport_data, Year == 2000, Sex == 'F', Sport =='Tennis') %>% 
+  distinct(ID, .keep_all = T) %>%
+  summarize(mean_height=mean(Height, na.rm = T), sd=sd(Height, na.rm = T))
+```
+**mean = 171.8068, sd = 6.563322** Hm, okay.
+**6)** What sport practices the biggest athlete of 2006 Olympics?
+```{r}
+filter(sport_data, Year == 2006) %>%
+  filter(Weight == max(Weight, na.rm = T)) %>% 
+  select(Sport)
+```
+It was **skeleton**
+**7)** How many Golds won women between 1980 and 2020
+```{r}
+filter(sport_data, Sex == 'F', Medal == "Gold", between(Year, 1980,2020)) %>%
+  nrow()
+```
+**2959 gold medals** - quite a lot! Intrestingly same result for man is 4283. Not sure why so.
+**8)** What is th number of Olympic games John Aalberg have participated in?
+```{r}
+filter(sport_data, Name == 'John Aalberg') %>%
+  distinct(Year) %>% 
+  nrow()
+```
+**Only 2 times!** Poor thing
+
+**9)** Which age groups are the most and the least abundant on the 2008 Olympics?
+Age groups are [10-15), [15-25), [25-35), [35-45), [45-55), [55-65), [65-70).
+Note, that we have NA values in Age column.
+```{r}
+filter(sport_data, Year == 2008) %>%
+  drop_na(Age) %>% 
+  distinct(.,ID,.keep_all = T) %>% 
+  mutate(ints = cut(Age, breaks=c(10,15,25,35,45,55,65,70), right = F)) %>% 
+  group_by(ints) %>% 
+  summarize(number=n()) %>%
+  arrange(number) %>% slice(c(1,nrow(.)))
+```
+First line is the **smallest age group - 65-70 with only 1** brave old person
+Second line is the **biggest age group - 25-35 with 5382 persons**
+
+**10)**How did changed number of sports in 2002 Olympics in comparison with 1994?
+```{r}
+filter(sport_data, Year %in% c(2002, 1994)) %>% 
+  group_by(Year) %>%
+  distinct(Sport) %>% 
+  summarize(n_sports=n())
+```
+**It increased by 2!** Actuaaly it was a bit of surprise that there not so many winter sports.
+**11)**Top 3 countries by different types of medals and season
+```{r}
+sport_data %>%
+  drop_na(Team,Season,Medal) %>% 
+  group_by(Season, Medal, Team) %>% 
+  summarize(number_of_medals=n(),.groups = "drop_last") %>%
+  top_n(3)  %>% 
+  arrange(desc(number_of_medals),.by_group = T)
+```
+Here we have it. 18 rows of requested data.
+**12)** Let's add variable Height_z_scores with standartized Heights of athletes
+```{r}
+mean_height <- distinct(sport_data,ID, .keep_all = T) %>% 
+  pull(Height) %>% mean(.,na.rm = T)
+sd_height <- distinct(sport_data,ID, .keep_all = T) %>% 
+  pull(Height) %>% sd(.,na.rm = T)
+sport_data <- mutate(sport_data, Height_z_scores = (Height - mean_height)/sd_height)
+```
+**13)** mim-max normalization
+Let's inspect if or top and bottom values are okay
+```{r}
+top_n(sport_data,5,Height)
+top_n(sport_data,-5,Height)
+```
+while we have surprisingly small athletes in our dataset it's still possible.
+But between top heights we have definite outlyer - female 3.4 m high with weight only 68. Additional facktcheck shows that Minister of sport of Zimbabwe Kirsty Leigh Coventry is only half of that high - 1.76 m. But as long as we don't now her height at the time we just will drop that value. Same Athlete has normal entries. In previous tasks where this outlyer wasn't ommited it's effect was neglectable.
+```{r}
+sport_data <- filter(sport_data, is.na(Height) | Height != 340) %>% 
+  mutate(Height_min_max_scaled=
+                        ((Height-min(Height,na.rm = T))/(max(Height,na.rm = T)-min(Height,na.rm = T)))) 
+```
+**14)** Compare Height, Weight and Age between men and women i Winter Olympics
+```{r}
+men <- group_by(sport_data, Sex) %>%
+  distinct(ID,.keep_all = T) %>%
+  filter(Season == 'Winter',Sex == 'M')
+women <- group_by(sport_data, Sex) %>%
+  distinct(ID,.keep_all = T) %>%
+  filter(Season == 'Winter',Sex == 'F')
+```
+Let's have a look at Height
+```{r}
+t.test(men$Height,women$Height)
+```
+Let's have a look at Weight
+```{r}
+t.test(men$Weight,women$Weight)
+```
+Let's have a look at Age
+```{r}
+t.test(men$Age,women$Age)
+```
+**15)** Are Team and Medals variables independent?
+In order to check it we will perform Chi-square test. For this test will filter teams that have at least 5 of each type of medals.
+```{r}
+teams <- sport_data %>% 
+  count(Team,Medal) %>% 
+  filter(!is.na(Medal), n > 5) %>% ungroup %>% 
+  group_by(Team) %>% filter(n()>2) %>% distinct(Team) %>% 
+  pull(Team)
+all_medals <- sport_data %>% drop_na(Medal) %>% filter(Team %in% teams)
+```
+There are 77 teams that passed filtering and 3 kinds of medals. I Makes 152 degrees of freedom. What does the Chi say?
+```{r}
+chisq.test(all_medals$Team, all_medals$Medal)
+```
+With grate certainty we can say that not all teams are equal and some prefer medals od certain kind over others. **X-squared = 1686.8, df = 152 with p-value < 2.2e-16**
+
+## Additional
+
+Not sure what tests can help analyze this but I found something intresting.
+If you compare Weight distribution between summer and winter sports you can see something intresting.
+```{r echo=FALSE}
+out <- sport_data %>% distinct(ID, .keep_all = T) %>% 
+  drop_na(Weight)
+ggplot(out, aes(Season,Weight, fill = Sex)) +
+  geom_violin()
+```
+
+Winter weight distribution has some strange ribs! My Hypothesis is that it is due lack of winter competitions with weight classes. Let's look into it
+```{r echo=FALSE}
+w_sports <- filter(sport_data,Season == 'Winter') %>% 
+  distinct(Sport) %>% pull(Sport)
+print(w_sports)
+```
+Looks like there are no winter martial arts. What about summer?
+```{r echo=FALSE}
+s_sports <- filter(sport_data,Season == 'Summer') %>% 
+  distinct(Sport) %>% pull(Sport)
+print(s_sports)
+```
+Here we have Judo, Boxing, Wrestling,TTaekwondo
+Let's have a look at specific summer sports and their distribution comparing to all other sports
+```{r echo=FALSE}
+summer <- sport_data %>% distinct(ID, .keep_all = T) %>%
+  filter(Season == 'Summer') %>% 
+  drop_na(Weight)
+
+ggplot(summer, aes(Sport=='Boxing',Weight, fill=Sex)) +
+  geom_violin() + 
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))
+```
+```{r echo=FALSE}
+ggplot(summer, aes(Sport=='Judo',Weight,fill=Sex)) +
+  geom_violin() + 
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))
+```
+```{r echo=FALSE}
+ggplot(summer, aes(Sport=='Wrestling',Weight, fill=Sex)) +
+  geom_violin() + 
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))
+```
+```{r echo=FALSE}
+ggplot(summer, aes(Sport=='Taekwondo',Weight, fill=Sex)) +
+  geom_violin() + 
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))
+```
+
+
+There is clear that martial arts have noticeable weight categories, but it looks like it is different in different sports and not as sharp as one can expect. That way it can't really explain "ribbed" distribution of weights on Summer Olympics. Would be nice to figure out some statistical methods to answer such questions...
+
+
+
+
+#### Thank you for reading
